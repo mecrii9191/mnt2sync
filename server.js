@@ -1,7 +1,4 @@
 // server
-// TODO configure sudoers
-// as we only use cryptsetup, mount
-// we cant map ports in Dockerfile so choose a convinent port for this!!
 
 const fs = require('fs');
 const express = require('express');
