@@ -1,10 +1,20 @@
+#!/usr/bin/env node
 // server
+// TODO configure sudoers
+// as we only use cryptsetup, mount
+// we cant map ports in Dockerfile so choose a convinent port for this!!
+
+const PARTITION_CONFIG = {
+	'sync1': '/dev/sda1'
+};
 
 const fs = require('fs');
 const express = require('express');
+const { Mutex } = require('async-mutex');
 const path = require('path');
 const {
     exec,
+	execSync,
     spawn
 } = require('child_process');
 
@@ -15,6 +25,7 @@ const globalData = {
 
 const backend = express();
 const routes = express.Router();
+const mutex = new Mutex();
 
 backend.use(express.static('public'))
 backend.use(express.json());
@@ -52,6 +63,7 @@ const stdoutExec = (cmd) => {
             stdout += data;
         });
 
+        child.stderr.on('data', (data) => { console.log('stderr', data); });
         child.on('close', (code) => {
             resolve(stdout);
         });
@@ -74,6 +86,7 @@ const resolveLVM = () => {
             value
         }) => value.split('\n');
 
+        console.log(splitValue(r1),splitValue(r2));
         let syncMaps = {};
         splitValue(r2).forEach((line) => {
             const mat = line.match(/(?:\b|\s*?)(\/dev\/mapper\/sync\d+)\s*?(vg\d+)/);
@@ -90,23 +103,20 @@ const resolveLVM = () => {
                 volMap.set(line, syncMaps[vol]);
             }
         });
-
-        return globalData.volumeMap = volMap;
-    }).then((volumeMap) => volumeMap);
+		
+		globalData.volumeMap = volMap;
+        return volMap;
+    });
 }
 
 routes.get('/syncs', (req, res) => { // virtual volumes & fathers
-    if (globalData.volumeMap.size === 0) {
-        return resolveLVM().then((m) => res.json(Object.fromEntries(m.entries())));
-    } else {
-        return res.json(Object.fromEntries(globalData.volumeMap.entries()));
-    }
+	return res.json(Object.keys(PARTITION_CONFIG));
 });
 
 routes.get('/globalData', (req, res) => {
     return res.json({
         ...globalData,
-        volumeMap: Object.fromEntries(globalData.volumeMap.entries())
+        partitions: Object.keys(PARTITION_CONFIG)
     });
 });
 
@@ -115,41 +125,61 @@ routes.post('/mount', async (req, res) => { // unlock&mount, use -f to fake moun
         sync,
         password
     } = req.body;
-    if (!sync.match(/^\/dev\/mapper\/vg\d+\-\w+$/)) return res.sendStatus(401);
-    if (password.match(/[^A-Za-z0-9!_-~]/)) return res.sendStatus(401);
+	
+	
+    if (!sync || !PARTITION_CONFIG[sync]) return res.status(400);
+    if (password.match(/[^A-Za-z0-9!_-~]/)) return res.status(400);
 
-    const lvm = await resolveLVM();
+	return mutex.runExclusive(async () => {
+		const device = PARTITION_CONFIG[sync];
+		const mountFlags = await (() => { // fake the mount
+			const cmd = stdoutExec(`sudo cryptsetup status ${sync} | grep 'in use'`);
+			return cmd.then((stdout) => stdout.trim().length == 0 ? '' : '-f');
+		})();
 
-    let mapping = lvm[sync];
-    mapping = mapping.replace('/dev/mapper/', '');
+		// todo?? (pass)
+		try {
+			execSync(`echo -n "${password}" | sudo cryptsetup luksOpen ${device} ${sync} --tries 1 ${mountFlags === '-f' ? '--test-passphrase' : ''}`, { stdio: 'inherit' });
+		}
+		catch (e) {
+			return res.status(500).json({ message: 'failed to open luks device or sync' });
+		}
+		
+		const dests = [ ];
+		for (let i = 0; i < 3; ++i) await resolveLVM();
+		
+		if (!globalData.volumeMap.size) return res.status(500).json({ message: 'failed to resolve lvm' });
+		console.log('map:', globalData.volumeMap);
+		globalData.volumeMap.forEach((snc, lvol) => {
+			if (snc.endsWith(sync)) {
+				const dest = `/syncs/${lvol.substring(lvol.indexOf('-')+1)}`;
+				try {
+					execSync(`sudo mkdir -p ${dest}`, { stdio: 'inherit' });
+					execSync(`sudo mount ${mountFlags} ${lvol} ${dest}`, { stdio: 'inherit' });
+				}
+				catch (e) { console.log(e); }
+				console.log(`sudo mount ${mountFlags} ${lvol} ${dest}`);
+				dests.push(dest);
+			}
+		});
+		
+		// ensure all mounted
+		const cmd3 = await stdoutExec(`sudo mount | grep '/syncs/'`);
+		if (dests.find(d => !cmd3.includes(d)))
+			return res.status(500).json({ message: 'failed to mount' });
+		
+		// and listen to /syncs from application (syncthing)..
 
-    const [, syncName] = sync.match(/vg\d+\-(\w+)/);
-    const mountFlags = await (() => { // fake the mount
-        const cmd = stdoutExec(`sudo cryptsetup status ${mapping} | grep 'in use'`);
-        return cmd.then((stdout) => stdout.trim().length == 0 ? '' : '-f');
-    })();
+		// use mappings, validate mappings
+		// shut down: vgchange -an .. & cryptsetup close ..
+		// echo -n "pass" | sudo cryptsetup luksOpen sync1 --tries 1 (--test-passphrase)?
+		// mount (-f)? /dev/mapper/vg00-... /... (phone)
+		if (!cmd3.trim()) {
+			return res.status(500);
+		}
 
-    // todo?? (pass)
-    const cmd1 = await stdoutExec(`echo -n "${password}" | sudo cryptsetup luksOpen ${mapping} --tries 1 ${mountFlags === '-f' ? '--test-passphrase' : ''}`);
-    // mount...
-    const cmd2 = await stdoutExec(`sudo mount ${mountFlags} ${sync} /syncs/${syncName}`);
-    // should we close a volume..?
-    const cmd3 = await stdoutExec(`sudo mount | grep '/syncs/${syncName}'`);
-
-    // and listen to /syncs from application (syncthing)..
-
-    // use mappings, validate mappings
-    // shut down: vgchange -an ..
-    // echo -n "pass" | sudo cryptsetup luksOpen sync1 --tries 1 (--test-passphrase)?
-    // mount (-f)? /dev/mapper/vg00-... /... (phone)
-    if (!cmd3.trim()) {
-        return res.sendStatus(500);
-    }
-
-    return res.sendStatus(200).json({
-        m1: cmd1,
-        m2: cmd2
-    }); // debugging
+		return res.status(200).json({ message: 'successfully mounted!' }); // debugging
+	});
 });
 
 backend.listen('19520', '0.0.0.0');
