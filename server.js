@@ -38,7 +38,7 @@ backend.use(express.urlencoded({
 backend.use(({
     url
 }, res, next) => { // redirect /public
-    if(url.startsWith('/css') || url.startsWith('/js') || url.startsWith('/img')) {
+    if (url.startsWith('/css') || url.startsWith('/js') || url.startsWith('/img')) {
         res.sendFile(__dirname + '/public' + url);
     } else {
         next();
@@ -75,7 +75,7 @@ const stdoutExec = (cmd) => {
 };
 
 const resolveLVM = () => {
-    if(globalData.volumeMap.size) {
+    if (globalData.volumeMap.size) {
         return globalData.volumeMap;
     }
 
@@ -93,7 +93,7 @@ const resolveLVM = () => {
         let syncMaps = {};
         splitValue(r2).forEach((line) => {
             const mat = line.match(/(?:\b|\s*?)(\/dev\/mapper\/sync\d+)\s*?(vg\d+)/);
-            if(mat) {
+            if (mat) {
                 const [, father, vol] = mat;
                 syncMaps[vol] = father;
             }
@@ -101,7 +101,7 @@ const resolveLVM = () => {
 
         splitValue(r1).forEach((line) => {
             const res = line.match(/vg\d+/);
-            if(res) {
+            if (res) {
                 const [vol] = res;
                 volMap.set(line, syncMaps[vol]);
             }
@@ -130,8 +130,8 @@ routes.post('/mount', async (req, res) => { // unlock&mount, use -f to fake moun
     } = req.body;
 
 
-    if(!sync || !PARTITION_CONFIG[sync]) return res.status(400);
-    if(password.match(/[^A-Za-z0-9!_-~]/)) return res.status(400);
+    if (!sync || !PARTITION_CONFIG[sync]) return res.status(400);
+    if (password.match(/[^A-Za-z0-9!_-~]/)) return res.status(400);
 
     return mutex.runExclusive(async () => {
         const device = PARTITION_CONFIG[sync];
@@ -152,13 +152,13 @@ routes.post('/mount', async (req, res) => { // unlock&mount, use -f to fake moun
         }
 
         const dests = [];
-        for(let i = 0; i < 3; ++i) await resolveLVM();
+        for (let i = 0; i < 3; ++i) await resolveLVM();
 
-        if(!globalData.volumeMap.size) return res.status(500).json({
+        if (!globalData.volumeMap.size) return res.status(500).json({
             message: 'failed to resolve lvm'
         });
         globalData.volumeMap.forEach((snc, lvol) => {
-            if(snc.endsWith(sync)) {
+            if (snc.endsWith(sync)) {
                 const dest = `/syncs/${lvol.substring(lvol.indexOf('-')+1)}`;
                 try {
                     execSync(`sudo mkdir -p ${dest}`, {
@@ -174,7 +174,7 @@ routes.post('/mount', async (req, res) => { // unlock&mount, use -f to fake moun
 
         // ensure all mounted
         const cmd3 = await stdoutExec(`sudo mount | grep '/syncs/'`);
-        if(dests.find(d => !cmd3.includes(d)))
+        if (dests.find(d => !cmd3.includes(d)))
             return res.status(500).json({
                 message: 'failed to mount'
             });
@@ -185,11 +185,12 @@ routes.post('/mount', async (req, res) => { // unlock&mount, use -f to fake moun
         // shut down: vgchange -an .. & cryptsetup close ..
         // echo -n "pass" | sudo cryptsetup luksOpen sync1 --tries 1 (--test-passphrase)?
         // mount (-f)? /dev/mapper/vg00-... /... (phone)
-        if(!cmd3.trim()) {
+        if (!cmd3.trim()) {
             return res.status(500);
         }
 
         return res.status(200).json({
+            mounted: true,
             message: 'successfully mounted!'
         }); // debugging
     });
