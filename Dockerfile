@@ -1,3 +1,4 @@
+# UNFINISHED
 FROM node:lts-bookworm-slim
 RUN mkdir -p /app
 WORKDIR /app
