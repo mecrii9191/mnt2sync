@@ -53,6 +53,7 @@ const mount = (s, pas) => {
 }
 
 window.mog = async () => {
+    sendWarn('', 0);
     const selected = document.querySelector('#type').value;
     const password = document.querySelector('input[type=password]').value;
 
