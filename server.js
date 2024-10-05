@@ -5,7 +5,7 @@
 // we cant map ports in Dockerfile so choose a convinent port for this!!
 
 const PARTITION_CONFIG = {
-    'sync1': '/dev/sda1'
+    'sync1': '/dev/sda1' // TODO map to luks uuid instead
 };
 
 const fs = require('fs');
