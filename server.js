@@ -4,6 +4,7 @@
 // as we only use cryptsetup, mount
 // in syncthing docker-compose bind volume: /syncs:/syncs:rw
 // example for ./config: module.exports = { 'sync1': 'abcedf-ghijk-....' }; (find it out using blkid)
+// BAD CODE WARNING
 
 const fs = require('fs');
 const express = require('express');
