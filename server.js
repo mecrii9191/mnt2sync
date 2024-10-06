@@ -250,16 +250,4 @@ routes.post('/umount', async (req, res) => { // unmount and lock
     });
 });
 
-routes.post('/create', async (req, res) => { // ???
-    let {
-        part,
-        password
-    } = req.body;
-
-    // fucking take the partition and give it to lvm?
-    // might be hella dumb
-    // do this later
-
-});
-
 backend.listen('19520', '0.0.0.0');
